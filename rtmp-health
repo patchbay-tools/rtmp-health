@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# rtmp-health: check that RTMP ingest / playback endpoints are answering.
+#
+# Each URL is probed with ffprobe under a timeout. Exit status follows the
+# Nagios plugin convention: 0 OK, 2 CRITICAL, 3 UNKNOWN.
+#
+set -euo pipefail
+
+VERSION=0.4.1
+TIMEOUT=10
+JSON=0
+LIST=""
+
+usage() {
+    cat <<EOF
+usage: rtmp-health [-t seconds] [-j] [-f file] [url ...]
+
+  -t N     give up on a stream after N seconds (default ${TIMEOUT})
+  -j       print one JSON object per URL instead of text
+  -f FILE  read URLs from FILE, one per line (# comments allowed)
+  -V       print version
+EOF
+}
+
+while getopts ":t:jf:Vh" opt; do
+    case "$opt" in
+        t) TIMEOUT="$OPTARG" ;;
+        j) JSON=1 ;;
+        f) LIST="$OPTARG" ;;
+        V) echo "rtmp-health $VERSION"; exit 0 ;;
+        h) usage; exit 0 ;;
+        *) usage >&2; exit 3 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "UNKNOWN - ffprobe not found in PATH" >&2
+    exit 3
+fi
+
+urls=("$@")
+if [[ -n "$LIST" ]]; then
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line//[[:space:]]/}"
+        [[ -n "$line" ]] && urls+=("$line")
+    done <"$LIST"
+fi
+
+if [[ ${#urls[@]} -eq 0 ]]; then
+    usage >&2
+    exit 3
+fi
+
+# escape the few characters that can turn up in a URL or an ffprobe error
+json_str() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/ }"
+    printf '"%s"' "$s"
+}
+
+probe() {
+    local url="$1" out rc start elapsed
+    start=$(date +%s%N)
+    set +e
+    out=$(timeout --kill-after=2 "$TIMEOUT" ffprobe -v error -rw_timeout "$((TIMEOUT * 1000000))" \
+        -show_entries stream=codec_type,codec_name,width,height \
+        -of compact=p=0:nk=1 "$url" 2>&1)
+    rc=$?
+    set -e
+    elapsed=$(( ($(date +%s%N) - start) / 1000000 ))
+
+    local status detail
+    if [[ $rc -eq 0 && -n "$out" ]]; then
+        status=OK
+        detail=$(echo "$out" | paste -sd ' ' -)
+    elif [[ $rc -eq 124 || $rc -eq 137 ]]; then
+        status=CRITICAL
+        detail="timed out after ${TIMEOUT}s"
+    else
+        status=CRITICAL
+        detail=$(echo "${out:-no streams}" | tail -n 1)
+    fi
+
+    if [[ $JSON -eq 1 ]]; then
+        printf '{"url":%s,"status":"%s","ms":%d,"detail":%s}\n' \
+            "$(json_str "$url")" "$status" "$elapsed" "$(json_str "$detail")"
+    else
+        printf '%-8s %6dms  %s  %s\n' "$status" "$elapsed" "$url" "$detail"
+    fi
+
+    [[ $status == OK ]]
+}
+
+failed=0
+for url in "${urls[@]}"; do
+    probe "$url" || failed=$((failed + 1))
+done
+
+if [[ $failed -gt 0 ]]; then
+    [[ $JSON -eq 1 ]] || echo "CRITICAL - $failed of ${#urls[@]} streams down"
+    exit 2
+fi
+
+[[ $JSON -eq 1 ]] || echo "OK - ${#urls[@]} streams up"
+exit 0
