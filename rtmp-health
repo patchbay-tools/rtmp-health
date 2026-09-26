@@ -7,7 +7,7 @@
 #
 set -euo pipefail
 
-VERSION=0.4.1
+VERSION=0.4.2
 TIMEOUT=10
 JSON=0
 LIST=""
@@ -34,6 +34,11 @@ while getopts ":t:jf:Vh" opt; do
     esac
 done
 shift $((OPTIND - 1))
+
+if ! [[ "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+    echo "UNKNOWN - timeout must be a whole number of seconds" >&2
+    exit 3
+fi
 
 if ! command -v ffprobe >/dev/null 2>&1; then
     echo "UNKNOWN - ffprobe not found in PATH" >&2
