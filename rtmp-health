@@ -7,26 +7,29 @@
 #
 set -euo pipefail
 
-VERSION=0.4.2
+VERSION=0.5.0
 TIMEOUT=10
 JSON=0
+NEED_VIDEO=0
 LIST=""
 
 usage() {
     cat <<EOF
-usage: rtmp-health [-t seconds] [-j] [-f file] [url ...]
+usage: rtmp-health [-t seconds] [-j] [-w] [-f file] [url ...]
 
   -t N     give up on a stream after N seconds (default ${TIMEOUT})
   -j       print one JSON object per URL instead of text
+  -w       fail a stream that answers without a video track
   -f FILE  read URLs from FILE, one per line (# comments allowed)
   -V       print version
 EOF
 }
 
-while getopts ":t:jf:Vh" opt; do
+while getopts ":t:jwf:Vh" opt; do
     case "$opt" in
         t) TIMEOUT="$OPTARG" ;;
         j) JSON=1 ;;
+        w) NEED_VIDEO=1 ;;
         f) LIST="$OPTARG" ;;
         V) echo "rtmp-health $VERSION"; exit 0 ;;
         h) usage; exit 0 ;;
@@ -83,6 +86,11 @@ probe() {
     if [[ $rc -eq 0 && -n "$out" ]]; then
         status=OK
         detail=$(echo "$out" | paste -sd ' ' -)
+        # an encoder that has lost its capture card often keeps sending audio
+        if [[ $NEED_VIDEO -eq 1 ]] && ! grep -q '^video|' <<<"$out"; then
+            status=CRITICAL
+            detail="no video stream ($detail)"
+        fi
     elif [[ $rc -eq 124 || $rc -eq 137 ]]; then
         status=CRITICAL
         detail="timed out after ${TIMEOUT}s"

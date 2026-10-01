@@ -24,6 +24,7 @@ Icinga, Zabbix external checks or a cron job.
 ```
 rtmp-health rtmp://live.example.net/app/stream
 rtmp-health -t 5 -f streams.txt
+rtmp-health -w rtmp://live.example.net/app/stream
 rtmp-health -j rtmp://a.example.net/live/one rtmp://b.example.net/live/two
 ```
 
@@ -40,6 +41,9 @@ JSON output (`-j`), one object per line:
 ```
 {"url":"rtmp://live.example.net/app/stream","status":"OK","ms":812,"detail":"video|h264|1280|720 audio|aac||"}
 ```
+
+`-w` also fails a stream that answers with audio only, which is what an
+encoder usually does when it loses its video source.
 
 A URL file takes one URL per line; blank lines and `#` comments are ignored.
 
